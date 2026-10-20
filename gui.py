@@ -43,6 +43,7 @@ def apply_style(root):
     s.configure("Stat.TLabel", font=(family, 19, "bold"))
     s.configure("StatSmall.TLabel", font=(family, 13, "bold"))
     s.configure("Error.TLabel", foreground=FIELD, font=small)
+    s.configure("Footnote.TLabel", background=BG, foreground="#a0a5b0", font=(family, 10))
 
     for w in ("TEntry", "TCombobox"):
         s.configure(w, fieldbackground="white", bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
@@ -112,7 +113,9 @@ class App(tk.Tk):
         self.file_label = ttk.Label(head, text="No file loaded", style="Subtitle.TLabel")
         self.file_label.pack(side="right", padx=12)
 
-        body = ttk.Frame(self, style="App.TFrame", padding=(20, 8, 20, 20))
+        ttk.Label(self, text="© 2026 Vassilios Kapaklis  ·  vassilios.kapaklis@physics.uu.se  ·  MIT License", style="Footnote.TLabel").pack(
+            side="bottom", anchor="e", padx=22, pady=(0, 8))
+        body = ttk.Frame(self, style="App.TFrame", padding=(20, 8, 20, 6))
         body.pack(fill="both", expand=True)
         body.columnconfigure(1, weight=1)
         body.rowconfigure(0, weight=1)
