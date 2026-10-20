@@ -96,9 +96,12 @@ Known N (sphere 1/3, ellipsoid, cylinder from a table), volume in cm^3:
 python3 demag.py loop.dat --N 0.3333 --volume 0.0042 -o loop_corrected.csv
 ```
 
-Input is an MPMS `.dat` (data after `[Data]`) or any CSV with a header row. Columns are found by
-substring (`--field-col`, default "Magnetic Field"; `--moment-col`, default "Moment"); the tool prints
-which columns it picked, so check that it took the moment column you want (e.g. "DC Moment Free Ctr").
+Input is a Quantum Design MPMS3 (or older MPMS) `.dat` file, or any CSV with a header row. In an MPMS3 file the
+tool reads the data after `[Data]` and, by default, uses the moment column that actually holds data: `Moment (emu)`
+for VSM measurements, `DC Moment Free Ctr (emu)` for DC scans (or name another with `--moment-col`, e.g.
+`"Fixed Ctr"`). Rows without a value (failed points, comments) are skipped. The GUI shows the sample notes stored
+in the file header (material, comment, size, shape, mass) to help with the dimensions. The correction assumes Oe and
+emu; if the column names say otherwise, the tool warns. AC-susceptibility runs carry no DC moment and are refused.
 
 Output CSV: `H_applied (Oe), moment (emu), background (emu), M (emu/cm3), H_int (Oe)`.
 

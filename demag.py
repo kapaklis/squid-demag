@@ -104,8 +104,9 @@ def read_table(path):
     """Return (header, rows of strings) from an MPMS .dat or a plain CSV."""
     with open(path, newline="", encoding="utf-8", errors="replace") as f:
         lines = f.read().splitlines()
-    if "[Data]" in lines:  # MPMS .dat: header block, then CSV after [Data]
-        lines = lines[lines.index("[Data]") + 1:]
+    marks = [i for i, line in enumerate(lines) if line.strip() == "[Data]"]
+    if marks:  # MPMS .dat: header block, then CSV after [Data]
+        lines = lines[marks[0] + 1:]
     reader = csv.reader(lines)
     header = next(reader, None)
     if not header:
@@ -121,10 +122,54 @@ def find_column(header, key):
     return hits[0]
 
 
-def read_loop(path, field_key, moment_key):
-    """Return (field column name, moment column name, rows of (H, m)) from an MPMS .dat or a plain CSV."""
+def read_info(path):
+    """Header INFO entries of an MPMS3 .dat as {key: value}, e.g. SAMPLE_MATERIAL, SAMPLE_SIZE; {} for a CSV."""
+    info = {}
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if line.strip() == "[Data]":
+                break
+            if line.startswith("INFO,"):
+                value, _, key = line[5:].rstrip("\r\n").rpartition(",")  # the value itself may contain commas
+                info[key.strip()] = value.strip()
+    return info
+
+
+def _is_number(row, i):
+    try:
+        float(row[i])
+        return True
+    except (ValueError, IndexError):
+        return False
+
+
+def pick_moment(header, table):
+    """Index of the DC moment column holding the most numbers.
+
+    MPMS3 files carry several: VSM measurements fill 'Moment (emu)', DC scans fill 'DC Moment Free Ctr (emu)' and
+    'DC Moment Fixed Ctr (emu)' (Free is preferred when both are filled). Errors and AC columns are skipped.
+    """
+    skip = ("err", "std", "ac ", "quad")
+    cands = [i for i, h in enumerate(header) if "moment" in h.lower() and not any(w in h.lower() for w in skip)]
+    if not cands:
+        raise ValueError(f"No moment column. Columns: {header}")
+    return max(cands, key=lambda i: (sum(_is_number(r, i) for r in table), "fixed" not in header[i].lower()))
+
+
+def unit_warning(field_col, moment_col):
+    """Text warning when the column names don't say Oe and emu, the units the correction assumes; else ''."""
+    bad = [name for name, unit in [(field_col, "(Oe)"), (moment_col, "(emu)")] if unit not in name]
+    return f"check units: expected Oe and emu, got {', '.join(repr(b) for b in bad)}" if bad else ""
+
+
+def read_loop(path, field_key, moment_key=None):
+    """Return (field column name, moment column name, rows of (H, m)) from an MPMS .dat or a plain CSV.
+
+    moment_key None picks the moment column that has data (see pick_moment).
+    """
     header, table = read_table(path)
-    hi, mi = find_column(header, field_key), find_column(header, moment_key)
+    hi = find_column(header, field_key)
+    mi = pick_moment(header, table) if moment_key is None else find_column(header, moment_key)
     rows = []
     for row in table:
         try:
@@ -132,7 +177,7 @@ def read_loop(path, field_key, moment_key):
         except (ValueError, IndexError):
             continue  # MPMS leaves failed measurements blank
     if not rows:
-        raise ValueError("No numeric (field, moment) rows found.")
+        raise ValueError(f"No numeric data in '{header[hi]}' and '{header[mi]}' (an AC-only or empty run?)")
     return header[hi], header[mi], rows
 
 
@@ -193,7 +238,8 @@ def main(argv=None):
     p.add_argument("--N", type=float, help="use this demagnetizing factor instead of the shape formula")
     p.add_argument("--volume", type=float, help="magnetic volume in cm^3 (default: from --dims)")
     p.add_argument("--field-col", default="Magnetic Field", help="substring of the field column name (Oe)")
-    p.add_argument("--moment-col", default="Moment", help="substring of the moment column name (emu)")
+    p.add_argument("--moment-col", help="substring of the moment column name (emu); default: the moment column "
+                                        "with data (MPMS3: 'Moment' for VSM, 'DC Moment Free Ctr' for DC scans)")
     bg = p.add_mutually_exclusive_group()
     bg.add_argument("--bg-fit", type=float, metavar="HMIN",
                     help="subtract a linear background fitted to the points with |H| >= HMIN Oe")
@@ -241,6 +287,8 @@ def main(argv=None):
         elif args.bg_file:
             background = reference_background(read_loop(args.bg_file, args.field_col, args.moment_col)[2], args.bg_scale)
             note = f"{args.bg_file} x {args.bg_scale:g}"
+        if unit_warning(fcol, mcol):
+            print("warning: " + unit_warning(fcol, mcol), file=sys.stderr)
         print(f"field: '{fcol}'  moment: '{mcol}'  N = {N:.6f}  V = {V:.6g} cm^3  rows = {len(rows)}  "
               f"background: {note}", file=sys.stderr)
         corrected = correct(rows, N, V, background)

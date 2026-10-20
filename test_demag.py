@@ -4,7 +4,7 @@ import os
 import tempfile
 from math import isclose, log, pi, sqrt, tanh
 
-from demag import cylinder_N, ellipsoid_N, factors, volume, N_along, N_in_plane, diagonal_angle, fit_background, main, prism_N, reference_background
+from demag import pick_moment, read_info, read_loop, unit_warning, cylinder_N, ellipsoid_N, factors, volume, N_along, N_in_plane, diagonal_angle, fit_background, main, prism_N, reference_background
 
 # cube, and the three factors of any prism sum to 1
 assert isclose(prism_N(1, 1, 1), 1 / 3, abs_tol=1e-12)
@@ -93,5 +93,25 @@ with tempfile.TemporaryDirectory() as d:
     main([src, "-o", dst, "--dims", "2", "2", "2", "--bg-file", src, "--bg-scale", "0.5"])
     H, m, b, M, Hi = map(float, list(csv.reader(open(dst)))[1])
     assert isclose(b, 0.005) and isclose(M, 0.005 / 0.008)
+
+    # MPMS3 layout: INFO header (values may hold commas), several moment columns, DC scans leave 'Moment (emu)' empty
+    mp3 = os.path.join(d, "dc.dat")
+    with open(mp3, "w") as f:
+        f.write("[Header]\n; MPMS3 Data File (default extension .dat)\n"
+                "INFO,MPMS3 Measurement Release 1.2.2 Build 0, MultiVu Release 2.3.6.1,APPNAME\n"
+                "INFO,4x4 mm^2,SAMPLE_SIZE\nINFO,,SAMPLE_MASS\n[Data]\n"
+                "Comment,Magnetic Field (Oe),Moment (emu),M. Std. Err. (emu),AC Moment (emu),"
+                "DC Moment Fixed Ctr (emu),DC Moment Err Fixed Ctr (emu),DC Moment Free Ctr (emu)\n"
+                ",1000,,,,0.011,1e-6,0.012\n,-1000,,,,-0.011,1e-6,-0.012\n")
+    info = read_info(mp3)
+    assert info["APPNAME"] == "MPMS3 Measurement Release 1.2.2 Build 0, MultiVu Release 2.3.6.1"
+    assert info["SAMPLE_SIZE"] == "4x4 mm^2" and info["SAMPLE_MASS"] == ""
+    fcol, mcol, rows = read_loop(mp3, "Magnetic Field")
+    assert mcol == "DC Moment Free Ctr (emu)" and rows == [(1000, 0.012), (-1000, -0.012)]
+    assert read_loop(mp3, "Magnetic Field", "Fixed Ctr")[1] == "DC Moment Fixed Ctr (emu)"
+    assert pick_moment(["Moment (emu)", "DC Moment Free Ctr (emu)"], [["1", ""], ["2", ""]]) == 0  # VSM file
+    assert read_info(src) == {}
+assert unit_warning("Magnetic Field (Oe)", "Moment (emu)") == ""
+assert "Moment (A m2)" in unit_warning("Magnetic Field (Oe)", "Moment (A m2)")
 
 print("all checks passed")

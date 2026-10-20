@@ -11,8 +11,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-from demag import (SHAPES, N_along, N_in_plane, correct, diagonal_angle, find_column, fit_background, read_loop,
-                   read_table, reference_background, volume, write_csv)
+from demag import (SHAPES, N_along, N_in_plane, correct, diagonal_angle, find_column, fit_background, pick_moment,
+                   read_info, read_loop, read_table, reference_background, unit_warning, volume, write_csv)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BG, CARD, BORDER, HOVER = "#f3f4f7", "#ffffff", "#e3e5ea", "#f1f2f6"
@@ -21,7 +21,9 @@ ACCENT, ACCENT_DARK, ACCENT_SOFT = "#4f46e5", "#4338ca", "#e9e9fd"
 FIELD = "#e5484d"
 SIZE_LABELS = {"prism": "Sides (mm)", "ellipsoid": "Axis lengths (mm)",
                "cylinder": "Diameter A = B, length C (mm)  ·  axis along C"}
-FILETYPES = [("MPMS data or CSV", "*.dat *.csv *.txt"), ("All files", "*")]
+FILETYPES = [("MPMS data or CSV", "*.dat *.DAT *.csv *.CSV *.txt"), ("All files", "*")]
+INFO_KEYS = {"SAMPLE_MATERIAL": "{}", "SAMPLE_COMMENT": "{}", "SAMPLE_SIZE": "size {}", "SAMPLE_SHAPE": "shape {}",
+             "SAMPLE_MASS": "{} g"}
 
 
 def apply_style(root):
@@ -155,6 +157,8 @@ class App(tk.Tk):
             cb = ttk.Combobox(c, textvariable=var, state="readonly", width=30)
             cb.grid(row=2 + 2 * r, column=0, sticky="ew", pady=(2, 8))
             self.combos.append(cb)
+        self.info_label = ttk.Label(c, text="", style="Muted.TLabel", wraplength=260, justify="left")
+        self.info_label.grid(row=5, column=0, sticky="w")
 
     def build_sample_card(self, parent):
         c = self.card(parent, "Sample")
@@ -278,9 +282,13 @@ class App(tk.Tk):
         self.file_label.config(text=os.path.basename(path))
         for cb in self.combos:
             cb.config(values=self.header)
-        for var, key in [(self.field_col, "Magnetic Field"), (self.moment_col, "Moment")]:
+        info = read_info(path)  # MPMS3 sample notes, to help fill in the dimensions
+        self.info_label.config(text="  ·  ".join(
+            INFO_KEYS[k].format(info[k]) for k in INFO_KEYS if info.get(k)))
+        for var, pick in [(self.field_col, lambda: find_column(self.header, "Magnetic Field")),
+                          (self.moment_col, lambda: pick_moment(self.header, self.table))]:
             try:
-                var.set(self.header[find_column(self.header, key)])
+                var.set(self.header[pick()])
             except ValueError:
                 var.set("")
 
@@ -304,8 +312,8 @@ class App(tk.Tk):
         if mode == "file":
             if not self.ref_path:
                 raise ValueError("open a substrate file")
-            # the reference is read with the sample's column names, so both files must share a format
-            ref = read_loop(self.ref_path, self.field_col.get(), self.moment_col.get())[2]
+            # the reference picks its own moment column, so a VSM substrate run can correct a DC-scan sample
+            ref = read_loop(self.ref_path, self.field_col.get())[2]
             return reference_background(ref, float(self.bg_scale.get())), f"substrate × {float(self.bg_scale.get()):g}"
         return (lambda H: 0.0), "none"
 
@@ -390,6 +398,9 @@ class App(tk.Tk):
                 self.canvas.draw_idle()
                 return
             self.stats["bg"].set(note)
+            warning = unit_warning(self.field_col.get(), self.moment_col.get())
+            if warning:
+                self.message.config(text=warning.capitalize())
             H, m, _, M, Hi = zip(*self.corrected)
             if self.bg_mode.get() != "none":
                 ax.plot(H, [x / V for x in m], "--", color="#c3c7cf", lw=1, label="raw")
