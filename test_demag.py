@@ -4,7 +4,7 @@ import os
 import tempfile
 from math import isclose, log, pi, sqrt, tanh
 
-from demag import pick_moment, read_info, read_loop, unit_warning, cylinder_N, ellipsoid_N, factors, volume, N_along, N_in_plane, diagonal_angle, fit_background, main, prism_N, reference_background
+from demag import loop_shift, pick_moment, read_info, read_loop, unit_warning, cylinder_N, ellipsoid_N, factors, volume, N_along, N_in_plane, diagonal_angle, fit_background, main, prism_N, reference_background
 
 # cube, and the three factors of any prism sum to 1
 assert isclose(prism_N(1, 1, 1), 1 / 3, abs_tol=1e-12)
@@ -47,6 +47,20 @@ except ValueError:
     pass
 assert isclose(volume((2, 2, 1), "cylinder"), pi / 1000) and isclose(volume((2, 2, 2), "ellipsoid"), pi / 6 * 8 / 1000)
 
+# loop centre: virgin curve from 0, then a loop shifted by +25 Oe; found with or without starting at zero
+shift, hc = 25.0, 40.0
+virgin = [(H, 0.05 * tanh((H - shift) / 30) * (H - shift > 0)) for H in range(0, 501, 10)]
+down = [(H, 0.05 * tanh((H - shift + hc) / 30)) for H in range(500, -501, -10)]
+up = [(H, 0.05 * tanh((H - shift - hc) / 30)) for H in range(-500, 501, 10)]
+assert isclose(loop_shift(virgin + down + up), shift, abs_tol=0.5)
+assert isclose(loop_shift(down + up), shift, abs_tol=0.5)
+assert isclose(loop_shift([(H, m) for H, m in down + up for _ in (0, 1)]), shift, abs_tol=0.5)  # repeated fields
+try:
+    loop_shift([(H, 1 + 0 * H) for H in range(-5, 6)])
+    raise AssertionError("expected no crossing")
+except ValueError:
+    pass
+
 # background fit recovers a diamagnetic slope under a saturating loop, on both branches or one side only
 chi = -2e-7
 loop = [(H, s * 0.05 * tanh((H + s * 400) / 300) + chi * H) for s in (1, -1) for H in range(-50000, 50001, 1000)]
@@ -87,6 +101,8 @@ with tempfile.TemporaryDirectory() as d:
     main([src, "-o", dst, "--dims", "2", "2", "2", "--shape", "ellipsoid"])
     H, m, b, M, Hi = map(float, list(csv.reader(open(dst)))[1])
     assert isclose(M, 0.01 / (pi / 6 * 0.008)) and isclose(Hi, 1000 - 4 * pi / 3 * M)
+    main([src, "-o", dst, "--dims", "2", "2", "2", "--field-offset=-20"])
+    assert float(list(csv.reader(open(dst)))[1][0]) == 1020
     main([src, "-o", dst, "--dims", "2", "2", "2", "--bg-slope=-1e-6"])
     H, m, b, M, Hi = map(float, list(csv.reader(open(dst)))[1])
     assert isclose(b, -1e-3) and isclose(M, (0.01 + 1e-3) / 0.008) and isclose(Hi, 1000 - 4 * pi / 3 * M)

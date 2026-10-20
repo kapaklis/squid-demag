@@ -90,6 +90,26 @@ magnetic layer only. Choose one:
 python3 demag.py film.dat --dims 5 5 50e-6 --bg-fit 20000 -o film_corrected.csv
 ```
 
+### Field offset (magnet remanence)
+
+Flux trapped in the superconducting magnet after a large field leaves the field at the sample a few tens of Oe off
+the reported value. A loop too small to reverse that trapped flux (say ±500 Oe after a 7 T run) is then shifted
+sideways as a whole. `--field-offset OE` subtracts a known offset from the field (e.g. from a Pd reference
+measurement); `--field-offset auto` uses the loop centre, (H_c,down + H_c,up)/2, from where the background-subtracted
+moment crosses zero on the two branches (the virgin curve is skipped). In the GUI, type the offset or press
+**Auto-centre** in the Data card.
+
+Auto-centring cannot tell a magnet offset from exchange bias, so use it only on samples without one. Loops that go to
+high field in both directions reverse the trapped flux on each branch: the offset then changes sign between branches
+and narrows or widens the loop instead of shifting it, which a single offset does not correct. Resetting the magnet
+(QD "magnet reset") before low-field loops avoids the problem.
+
+The offset is applied before everything else, so `H_applied` in the output is the corrected applied field.
+
+```bash
+python3 demag.py loop.dat --dims 5 5 50e-6 --axis A --field-offset auto -o loop_corrected.csv
+```
+
 Known N (sphere 1/3, ellipsoid, cylinder from a table), volume in cm^3:
 
 ```bash

@@ -205,6 +205,31 @@ def reference_background(ref_rows, scale=1.0):
     return bg
 
 
+def loop_shift(rows):
+    """Loop centre (H_c,down + H_c,up) / 2 in Oe, from where the moment crosses zero on each branch.
+
+    Flux trapped in a superconducting magnet offsets the field by a roughly constant amount when the loop is too
+    small to reverse it, which shifts the whole loop sideways by this much. Exchange bias shifts it too and cannot be
+    told apart. Pass background-subtracted moments so a large linear background adds no crossings.
+    """
+    H, m = np.array(rows, float).T
+    step = np.sign(np.diff(H))
+    for i in range(1, len(step)):  # repeated field values keep the sweep direction
+        if step[i] == 0:
+            step[i] = step[i - 1]
+    start = 0
+    if abs(H[0]) < 0.5 * np.abs(H).max():  # starts near zero: skip the virgin curve up to the first turn
+        turns = np.nonzero(step[1:] != step[:-1])[0]
+        start = turns[0] + 1 if len(turns) else len(step)
+    crossings = {1.0: [], -1.0: []}
+    for i in range(start, len(step)):
+        if step[i] and m[i] * m[i + 1] < 0:
+            crossings[step[i]].append(H[i] - m[i] * (H[i + 1] - H[i]) / (m[i + 1] - m[i]))
+    if not crossings[1.0] or not crossings[-1.0]:
+        raise ValueError("the moment does not cross zero on both branches, so the loop centre is undefined")
+    return float((np.mean(crossings[1.0]) + np.mean(crossings[-1.0])) / 2)
+
+
 def correct(rows, N, V, background=lambda H: 0.0):
     """Rows of (H, m) -> rows of (H, m, background, M, H_int)."""
     out = []
@@ -245,6 +270,9 @@ def main(argv=None):
                     help="subtract a linear background fitted to the points with |H| >= HMIN Oe")
     bg.add_argument("--bg-slope", type=float, metavar="CHI", help="subtract CHI*H, CHI in emu/Oe; write a negative value as --bg-slope=-3e-8")
     bg.add_argument("--bg-file", metavar="PATH", help="subtract a measured bare-substrate loop (same column names)")
+    p.add_argument("--field-offset", metavar="OE",
+                   help="subtract this from the field (magnet remanence), or 'auto' to centre the loop on zero; "
+                        "write a negative value as --field-offset=-20")
     p.add_argument("--bg-scale", type=float, default=1.0,
                    help="multiply the --bg-file moment by this, e.g. sample/reference substrate mass (default 1)")
     args = p.parse_args(argv)
@@ -289,8 +317,14 @@ def main(argv=None):
             note = f"{args.bg_file} x {args.bg_scale:g}"
         if unit_warning(fcol, mcol):
             print("warning: " + unit_warning(fcol, mcol), file=sys.stderr)
+        offset = 0.0
+        if args.field_offset == "auto":
+            offset = loop_shift([(H, m - background(H)) for H, m in rows])
+        elif args.field_offset is not None:
+            offset = float(args.field_offset)
+        rows = [(H - offset, m) for H, m in rows]  # background is fitted above on the reported field; slope unchanged
         print(f"field: '{fcol}'  moment: '{mcol}'  N = {N:.6f}  V = {V:.6g} cm^3  rows = {len(rows)}  "
-              f"background: {note}", file=sys.stderr)
+              f"background: {note}  field offset: {offset:.4g} Oe", file=sys.stderr)
         corrected = correct(rows, N, V, background)
     except (OSError, ValueError) as e:
         sys.exit(str(e))

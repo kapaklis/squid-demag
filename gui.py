@@ -11,7 +11,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-from demag import (SHAPES, N_along, N_in_plane, correct, diagonal_angle, find_column, fit_background, pick_moment,
+from demag import (SHAPES, N_along, N_in_plane, correct, diagonal_angle, find_column, fit_background, loop_shift, pick_moment,
                    read_info, read_loop, read_table, reference_background, unit_warning, volume, write_csv)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -133,7 +133,7 @@ class App(tk.Tk):
         self.build_geometry_card(right)
         self.build_results_card(right)
 
-        for var in [self.field_col, self.moment_col, self.shape, *self.dims, self.axis, self.angle, self.N_override,
+        for var in [self.field_col, self.moment_col, self.field_offset, self.shape, *self.dims, self.axis, self.angle, self.N_override,
                     self.V_override, self.bg_mode, self.bg_hmin, self.bg_slope, self.bg_scale]:
             var.trace_add("write", lambda *_: self.update_loop())
         self.update_loop()
@@ -159,6 +159,13 @@ class App(tk.Tk):
             self.combos.append(cb)
         self.info_label = ttk.Label(c, text="", style="Muted.TLabel", wraplength=260, justify="left")
         self.info_label.grid(row=5, column=0, sticky="w")
+        ttk.Label(c, text="Field offset (Oe)  ·  e.g. magnet remanence", style="Muted.TLabel").grid(
+            row=6, column=0, sticky="w", pady=(8, 0))
+        offset = ttk.Frame(c)
+        offset.grid(row=7, column=0, sticky="w", pady=(2, 0))
+        self.field_offset = tk.StringVar()
+        ttk.Entry(offset, textvariable=self.field_offset, width=9).pack(side="left")
+        ttk.Button(offset, text="Auto-centre", command=self.auto_centre).pack(side="left", padx=(8, 0))
 
     def build_sample_card(self, parent):
         c = self.card(parent, "Sample")
@@ -317,6 +324,29 @@ class App(tk.Tk):
             return reference_background(ref, float(self.bg_scale.get())), f"substrate × {float(self.bg_scale.get()):g}"
         return (lambda H: 0.0), "none"
 
+    def rows(self):
+        """(H, m) pairs from the chosen columns, skipping blank measurements."""
+        rows = []
+        if self.field_col.get() and self.moment_col.get():
+            hi, mi = self.header.index(self.field_col.get()), self.header.index(self.moment_col.get())
+            for r in self.table:
+                try:
+                    rows.append((float(r[hi]), float(r[mi])))
+                except (ValueError, IndexError):
+                    continue  # MPMS leaves failed measurements blank
+        return rows
+
+    def auto_centre(self):
+        """Fill the field offset with the loop centre, measured after the chosen background is removed."""
+        rows = self.rows()
+        try:
+            if not rows:
+                raise ValueError("open a loop first")
+            background, _ = self.background(rows)
+            self.field_offset.set(f"{loop_shift([(H, m - background(H)) for H, m in rows]):.1f}")
+        except (OSError, ValueError) as e:
+            self.message.config(text=f"Auto-centre: {e}", style="Error.TLabel")
+
     def set_diagonal(self):
         try:
             dims = [float(v.get()) for v in self.dims]
@@ -357,6 +387,7 @@ class App(tk.Tk):
             else:
                 N = N_along(dims, self.axis.get(), shape)
             V = float(self.V_override.get()) if self.V_override.get().strip() else volume(dims, shape)
+            offset = float(self.field_offset.get()) if self.field_offset.get().strip() else 0.0
             if not 0 <= N <= 1 or V <= 0:
                 raise ValueError("need 0 ≤ N ≤ 1 and volume > 0")
         except ValueError as e:
@@ -366,14 +397,7 @@ class App(tk.Tk):
         self.stats["N"].set(f"{N:.4f}")
         self.stats["V"].set(f"{V:.3g}")
 
-        rows = []
-        if self.field_col.get() and self.moment_col.get():
-            hi, mi = self.header.index(self.field_col.get()), self.header.index(self.moment_col.get())
-            for r in self.table:
-                try:
-                    rows.append((float(r[hi]), float(r[mi])))
-                except (ValueError, IndexError):
-                    continue  # MPMS leaves failed measurements blank
+        rows = self.rows()
         self.stats["pts"].set(str(len(rows)) if rows else "—")
 
         ax = self.ax
@@ -390,8 +414,8 @@ class App(tk.Tk):
         ax.set_ylabel("M (emu/cm³)", color=MUTED)
         if rows:
             try:
-                background, note = self.background(rows)
-                self.corrected = correct(rows, N, V, background)
+                background, note = self.background(rows)  # fitted on the reported field; the slope is unchanged
+                self.corrected = correct([(H - offset, m) for H, m in rows], N, V, background)
             except (OSError, ValueError) as e:
                 self.message.config(text=f"Background: {e}")
                 self.stats["bg"].set("—")
@@ -402,8 +426,8 @@ class App(tk.Tk):
             if warning:
                 self.message.config(text=warning.capitalize())
             H, m, _, M, Hi = zip(*self.corrected)
-            if self.bg_mode.get() != "none":
-                ax.plot(H, [x / V for x in m], "--", color="#c3c7cf", lw=1, label="raw")
+            if self.bg_mode.get() != "none" or offset:
+                ax.plot(*zip(*[(h, x / V) for h, x in rows]), "--", color="#c3c7cf", lw=1, label="raw")
             ax.plot(H, M, color="#9aa0ab", lw=1.2, label="vs applied field")
             ax.plot(Hi, M, color=ACCENT, lw=1.8, label="vs internal field")
             ax.axhline(0, color=BORDER, lw=0.8)
