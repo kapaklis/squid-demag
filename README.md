@@ -107,3 +107,7 @@ Output CSV: `H_applied (Oe), moment (emu), background (emu), M (emu/cm3), H_int 
 ```bash
 python3 test_demag.py
 ```
+
+## License
+
+MIT, see [LICENSE](LICENSE).
